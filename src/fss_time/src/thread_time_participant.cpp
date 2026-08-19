@@ -1,0 +1,157 @@
+#include "fss_time/thread_time_participant.hpp"
+
+#include "fss_time/time_types.hpp"
+#include "fss_time/tools.hpp"
+
+#include <algorithm>
+#include <cctype>
+#include <iostream>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <utility>
+
+#include <unistd.h>
+
+namespace fss_time
+{
+
+namespace
+{
+
+template<typename T>
+T declare_or_get_parameter_locked(rclcpp::Node & node, const std::string & name, const T & default_value)
+{
+  static std::mutex parameter_mutex;
+  std::lock_guard<std::mutex> lock(parameter_mutex);
+  if (!node.has_parameter(name)) {
+    return node.declare_parameter<T>(name, default_value);
+  }
+
+  T value{};
+  node.get_parameter(name, value);
+  return value;
+}
+
+std::string sanitize_name(std::string name)
+{
+  if (name.empty() || name == "/") {
+    return "participant";
+  }
+
+  while (!name.empty() && name.front() == '/') {
+    name.erase(name.begin());
+  }
+  for (auto & c : name) {
+    if (!std::isalnum(static_cast<unsigned char>(c)) && c != '_' && c != '-') {
+      c = '_';
+    }
+  }
+  return name.empty() ? "participant" : name;
+}
+
+ZeroMqTimeParticipantOptions make_options(
+  rclcpp::Node & node,
+  const std::string & participant_id_hint)
+{
+  ZeroMqTimeParticipantOptions options;
+  auto base_name = participant_id_hint;
+  if (base_name.empty()) {
+    base_name = std::string(node.get_namespace()) + "_" + node.get_name();
+    if (base_name.empty() || base_name == "/") {
+      base_name = node.get_name();
+    }
+  }
+
+  options.participant_id = sanitize_name(
+    base_name + "_" +
+    std::to_string(static_cast<long long>(getpid())) + "_" +
+    std::to_string(std::hash<std::thread::id>{}(std::this_thread::get_id())) + "_" +
+    fss_time_tools::make_uuid());
+  options.coordinator_endpoint =
+    declare_or_get_parameter_locked<std::string>(node, "fss_time_coordinator_endpoint", options.coordinator_endpoint);
+  return options;
+}
+
+thread_local std::unique_ptr<thread_time_participant> tls_participant;
+
+}  // namespace
+
+thread_time_participant::thread_time_participant(
+  std::shared_ptr<ZeroMqTimeParticipantBackend> backend)
+: backend_(std::move(backend))
+{
+  backend_->register_participant();
+}
+
+thread_time_participant::~thread_time_participant()
+{
+  unregister_participant();
+}
+
+thread_time_participant & thread_time_participant::for_current_thread(
+  rclcpp::Node & node,
+  const std::string & participant_id_hint)
+{
+  if (!tls_participant) {
+    tls_participant = std::unique_ptr<thread_time_participant>(
+      new thread_time_participant(std::make_shared<ZeroMqTimeParticipantBackend>(
+        make_options(node, participant_id_hint),
+        node.get_clock())));
+  }
+  return *tls_participant;
+}
+
+#ifdef BUILD_TESTING
+void thread_time_participant::reset_current_thread_for_testing()
+{
+  tls_participant.reset();
+}
+#endif
+
+void thread_time_participant::announce_next_safe_time(const rclcpp::Time & next_safe_time)
+{
+  const auto requested_safe_time_ns = next_safe_time.nanoseconds();
+  bool decreased = false;
+  int64_t previous_safe_time_ns = 0;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const bool last_safe_time_is_infinite = last_safe_time_ns_ >= kInfiniteTimeNs - 1;
+    previous_safe_time_ns = last_safe_time_ns_;
+    decreased = requested_safe_time_ns < last_safe_time_ns_ && !last_safe_time_is_infinite;
+    last_safe_time_ns_ = requested_safe_time_ns;
+  }
+  if (decreased) {
+    std::cerr
+      << "\033[33m[fss_time::thread_time_participant] next_safe_time decreased from "
+      << previous_safe_time_ns << " ns to " << requested_safe_time_ns
+      << " ns.\033[0m" << std::endl;
+  }
+  backend_->announce_next_safe_time(requested_safe_time_ns);
+}
+
+void thread_time_participant::unregister_participant()
+{
+  if (backend_) {
+    backend_->unregister_participant();
+  }
+}
+
+void thread_time_participant::set_follows_real_time(bool follows_real_time)
+{
+  backend_->set_follows_real_time(follows_real_time);
+}
+
+rclcpp::Time thread_time_participant::get_sim_time() const
+{
+  return rclcpp::Time(backend_->current_time_ns(), RCL_ROS_TIME);
+}
+
+rclcpp::Time thread_time_participant::get_last_safe_time() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  return rclcpp::Time(last_safe_time_ns_, RCL_ROS_TIME);
+}
+
+}  // namespace fss_time

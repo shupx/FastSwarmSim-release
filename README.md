@@ -1,102 +1,99 @@
-# fss_sensing
+# FastSwarmSim
 
-This package provides a ROS 2 local point cloud simulator based on `marsim_render`. It renders a LiDAR point cloud from the current drone pose using a static PCD map.
+FastSwarmSim (fss) is a lightweight ROS 2 simulator for PX4-compatible multi-rotor vehicles. It combines a streamlined PX4 runtime, MAVROS-compatible ROS interfaces, local LiDAR point-cloud rendering, RViz visualization, and a conservative lock-step simulation clock. The simulator is intended for multi-UAV algorithm development, repeatable simulation-time experiments, and large-scale swarm prototyping.
 
-The simulator supports the `fss_time` coordinated simulation clock and lock-step execution. The coordinated clock is enabled by default (`use_fss_sim_time:=true`), so the sensing timer advances with the global simulation time rather than wall time.
+**Performance:**
+On a desktop-class computer with LiDAR simulation disabled, FastSwarmSim can run a single vehicle at up to 100x real time, five vehicles at 50x, ten vehicles at 30x, and one hundred vehicles at 4x. This performance comes from the trimmed PX4 core, lightweight MAVROS modules, and efficient lock-step simulation-time system.
+
+## Packages
+
+| Package | Purpose |
+| --- | --- |
+| `fss_bringup` | Integrated launch files for complete single- and multi-drone PX4/LiDAR/RViz simulations. |
+| `fss_px4_sim` | PX4-based quadrotor simulation runtime, MAVROS Lite bridge, ideal quadrotor dynamics, MAVROS-compatible perfect-drone baseline, and RViz vehicle visualization. |
+| `fss_sensing` | Local LiDAR point-cloud simulator. It renders the visible cloud from a vehicle pose against a static PCD map through the bundled `marsim_render` library. |
+| `fss_time` | ZeroMQ-based conservative lock-step time coordinator, `/clock` publisher, simulation-speed controls, and C++ helpers/executors for time-synchronized ROS 2 nodes. **NOT only for FastSwarmSim, but for all types of ROS nodes**  |
+| `fss_time_interfaces` | ROS 2 message and service definitions used by `fss_time`, including simulation clock control interfaces. |
+
+The standard PX4 simulation uses a trimmed PX4 v1.13.3 control stack with MAVROS Lite. For algorithm tests that do not require PX4 control or vehicle dynamics, the perfect-drone launch provides immediate MAVROS-compatible command tracking.
+
+## Installation
+
+The project is developed for Ubuntu 22.04 with ROS 2 Humble. Ubuntu 24.04 with ROS 2 Jazzy follows the same process, although package names can differ by ROS distribution.
+
+Install ROS 2, `colcon`, and `rosdep` by following the [ROS 2 installation guide](https://gitee.com/shu-peixuan/install_ros2). The guide also includes solutions for common network issues.
+
+Initialize `rosdep` once on a new machine, then clone and build the workspace. `rosdep install` resolves the required system and ROS dependencies:
 
 ```bash
-# Launch the local point cloud simulator with the default configuration.
+sudo rosdep init
+rosdep update
+
+git clone https://github.com/shupx/FastSwarmSim.git
+
+# for chinese users
+git clone https://gitee.com/shu-peixuan/FastSwarmSim.git  
+
+cd FastSwarmSim
+
+source /opt/ros/$ROS_DISTRO/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+source install/setup.bash
+```
+
+Source `install/setup.bash` in every new terminal before running the commands below. 
+
+## Common Launch Commands
+
+### [Time coordinator](src/fss_time/README.md)
+
+```bash
+ros2 launch fss_time time_coordinator.launch.py
+```
+
+Set a maximum simulation speed when needed:
+
+```bash
+ros2 launch fss_time time_coordinator.launch.py max_real_time_factor:=2.0
+```
+
+### [PX4 and perfect-drone simulation](src/fss_px4_sim/README.md)
+
+```bash
+ros2 launch fss_px4_sim px4_rotor_sim_single.launch.py
+ros2 launch fss_px4_sim px4_rotor_sim_multi.launch.py num_drones:=5
+ros2 launch fss_px4_sim perfect_mavros_drone_swarm.launch.py num_drones:=5
+```
+
+![Multi-drone PX4 simulation in RViz](misc/px4_rotor_sim_multi.png)
+
+### [Local LiDAR point cloud](src/fss_sensing/README.md)
+
+```bash
 ros2 launch fss_sensing fss_local_pointcloud_sim.launch.py
-
-# Run with wall time instead of the FastSwarmSim coordinated simulation clock.
-ros2 launch fss_sensing fss_local_pointcloud_sim.launch.py use_fss_sim_time:=false
-
-# Run with a custom point cloud configuration file.
-ros2 launch fss_sensing fss_local_pointcloud_sim.launch.py config_path:=/path/to/local_pointcloud_sim.yaml
 ```
 
-## What it contains:
-
-1. A local point cloud simulator node that subscribes to the drone pose or odometry and renders the point cloud visible from the drone using `marsim_render`.
-
-2. A static global point cloud publisher. The `global_pc` topic uses reliable, transient-local QoS, so subscribers that start after the simulator still receive the map.
-
-3. A configurable LiDAR model and map source. The default configuration is installed at `config/local_pointcloud_sim.yaml` and supports the sensing range, rate, field of view, angular resolution, downsampling resolution, input topics, and output topics.
-
-4. `fss_time` lock-step simulation-time integration. Set `use_fss_sim_time:=false` to use the normal ROS clock (`/clock` when `use_sim_time` is enabled, otherwise wall time).
-
-## Topics
-
-The default configuration uses the following topics:
-
-| Topic | Type | Description |
-| --- | --- | --- |
-| `mavros/local_position/pose` | `geometry_msgs/msg/PoseStamped` | Input drone pose. Set `use_odom: true` to use `mavros/local_position/odom` instead. |
-| `cloud_registered` | `sensor_msgs/msg/PointCloud2` | Local point cloud rendered at the configured sensing rate (10 Hz by default). |
-| `global_pc` | `sensor_msgs/msg/PointCloud2` | Complete static map point cloud, published once at startup. |
-
-Topic names, frame ID, map, and LiDAR parameters can be changed in `local_pointcloud_sim.yaml`.
-
-## Trouble shooting
-
-### Local point cloud is only published at 1 Hz
-
-The default local point cloud rate is 10 Hz. It can also run at 2x real-time simulation speed. If `cloud_registered` is received at only about 1 Hz, the rendered point cloud is likely larger than the default DDS shared-memory segment or UDP receive buffer. Configure the active RMW implementation before launching ROS 2 nodes.
-
-#### Fast DDS (`rmw_fastrtps_cpp`)
-
-Fast DDS uses shared memory for local communication, but its default 256 KB segment is too small for large point clouds. Create `fastdds.xml` with a larger segment; 8 MB is a suitable starting point:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<dds xmlns="http://www.eprosima.com">
-  <profiles>
-    <transport_descriptors>
-      <transport_descriptor>
-        <transport_id>shm_transport_8MB</transport_id>
-        <type>SHM</type>
-        <segment_size>8388608</segment_size>
-      </transport_descriptor>
-    </transport_descriptors>
-    <participant profile_name="default_participant" is_default_profile="true">
-      <rtps>
-        <userTransports>
-          <transport_id>shm_transport_8MB</transport_id>
-        </userTransports>
-        <useBuiltinTransports>true</useBuiltinTransports>
-      </rtps>
-    </participant>
-  </profiles>
-</dds>
-```
-
-Then start ROS 2 with the profile enabled:
+### [Integrated PX4, LiDAR, and RViz scenes](src/fss_bringup/README.md)
 
 ```bash
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-export FASTDDS_DEFAULT_PROFILES_FILE=/path/to/fastdds.xml
-# Required by older ROS 2 Humble releases; harmless to set as well.
-export FASTRTPS_DEFAULT_PROFILES_FILE=/path/to/fastdds.xml
-ros2 daemon stop
+ros2 launch fss_bringup sim_px4_drone_lidar_single.launch.py
+ros2 launch fss_bringup sim_px4_drone_lidar_multi.launch.py num_drones:=3
 ```
 
-Set `segment_size` according to the largest point cloud message. Every DDS participant (normally one per process) allocates a segment, so avoid setting it unnecessarily large.
+![Single-drone PX4 and LiDAR simulation in RViz](misc/sim_px4_drone_lidar_single.png)
 
-#### Cyclone DDS (`rmw_cyclonedds_cpp`)
+## Further Documentation
 
-Cyclone DDS uses UDP by default. Large local point clouds can overflow the system UDP receive buffer, so increase it before launching the nodes:
+- [Time coordination and multi-machine setup](src/fss_time/README.md)
+- [Local point-cloud configuration and DDS tuning](src/fss_sensing/README.md)
+- [PX4 simulator capabilities and scaling notes](src/fss_px4_sim/README.md)
+- [Integrated PX4/LiDAR launch details](src/fss_bringup/README.md)
+- [Time-coordinator test cases](src/fss_time/test_cases/README.md)
+
+Run the test suite with:
 
 ```bash
-sudo tee /etc/sysctl.d/60-cyclonedds.conf >/dev/null <<'EOF'
-net.core.rmem_max=8388608
-net.core.rmem_default=8388608
-EOF
-sudo sysctl --system
-
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-ros2 daemon stop
+colcon test
+colcon test-result --verbose
 ```
-
-The 8 MB values are a starting point and should be increased only when the largest point cloud requires it. Cyclone DDS shared-memory transport requires additional RouDi/mempool configuration and is not recommended here; use the UDP configuration above.
-
-See [the large point cloud DDS configuration reference](https://blog.csdn.net/benchuspx/article/details/163828928) for background and further tuning considerations.
