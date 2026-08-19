@@ -1,0 +1,12 @@
+Source: ros-jazzy-fss-sensing
+Section: misc
+Priority: optional
+Maintainer: "Peixuan Shu" <shupeixuan@qq.com>
+Build-Depends: debhelper (>= 9.0.0), libglew-dev, libglfw3-dev, libopencv-dev, libpcl-dev, libyaml-cpp-dev, ros-jazzy-ament-cmake, ros-jazzy-ament-index-cpp, ros-jazzy-fss-time, ros-jazzy-geometry-msgs, ros-jazzy-nav-msgs, ros-jazzy-pcl-conversions, ros-jazzy-rclcpp, ros-jazzy-sensor-msgs, ros-jazzy-ros-workspace
+Homepage: https://index.ros.org/p/fss_sensing/#jazzy
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-fss-sensing
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, libglew-dev, libglfw3-dev, libopencv-dev, libpcl-dev, libyaml-cpp-dev, ros-jazzy-ament-index-cpp, ros-jazzy-fss-time, ros-jazzy-geometry-msgs, ros-jazzy-launch, ros-jazzy-launch-ros, ros-jazzy-nav-msgs, ros-jazzy-pcl-conversions, ros-jazzy-rclcpp, ros-jazzy-sensor-msgs, ros-jazzy-ros-workspace
+Description: ROS 2 sensing wrappers for FastSwarmSim.
