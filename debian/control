@@ -1,0 +1,12 @@
+Source: ros-jazzy-fss-time-interfaces
+Section: misc
+Priority: optional
+Maintainer: "Peixuan Shu" <shupeixuan@qq.com>
+Build-Depends: debhelper (>= 9.0.0), ros-jazzy-ament-cmake, ros-jazzy-builtin-interfaces, ros-jazzy-rosidl-default-generators, ros-jazzy-ros-workspace, ros-jazzy-rosidl-typesupport-fastrtps-c, ros-jazzy-rosidl-typesupport-fastrtps-cpp
+Homepage: https://index.ros.org/p/fss_time_interfaces/#jazzy
+Standards-Version: 3.9.2
+
+Package: ros-jazzy-fss-time-interfaces
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, ros-jazzy-builtin-interfaces, ros-jazzy-rosidl-default-runtime, ros-jazzy-ros-workspace
+Description: Distributed simulation time interfaces for FastSwarmSim.
