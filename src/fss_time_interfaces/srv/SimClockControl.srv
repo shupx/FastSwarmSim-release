@@ -1,5 +1,0 @@
-bool running
-float64 max_real_time_factor
----
-bool success
-string message
